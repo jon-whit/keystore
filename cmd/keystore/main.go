@@ -96,7 +96,7 @@ func main() {
 	// If join was specified, make the join request.
 	if joinAddr != "" {
 		if err := join(joinAddr, raftAddr, nodeID); err != nil {
-			log.Fatalf("failed to join node at %s: %s", joinAddr, err.Error())
+			log.Fatalf("Failed to join Raft node at '%s' to the cluster: %s", joinAddr, err.Error())
 		}
 	}
 
