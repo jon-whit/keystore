@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -92,6 +93,13 @@ func main() {
 		}
 	}()
 
+	// If join was specified, make the join request.
+	if joinAddr != "" {
+		if err := join(joinAddr, raftAddr, nodeID); err != nil {
+			log.Fatalf("failed to join node at %s: %s", joinAddr, err.Error())
+		}
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
@@ -101,5 +109,27 @@ func main() {
 	case sig := <-sig:
 		log.Infof("'%v' caught. Terminating gracefully..", sig)
 		server.GracefulStop()
+		store.Close(true)
 	}
+}
+
+func join(joinAddr, raftAddr, nodeID string) error {
+
+	conn, err := grpc.Dial(joinAddr, grpc.WithInsecure())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client := kspb.NewKeystoreClient(conn)
+
+	_, err = client.Join(context.Background(), &kspb.JoinRequest{
+		NodeId:     nodeID,
+		ServerAddr: raftAddr,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

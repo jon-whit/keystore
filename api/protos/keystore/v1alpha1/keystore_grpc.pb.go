@@ -21,6 +21,7 @@ type KeystoreClient interface {
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
 	Set(ctx context.Context, in *SetRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type keystoreClient struct {
@@ -58,6 +59,15 @@ func (c *keystoreClient) Delete(ctx context.Context, in *DeleteRequest, opts ...
 	return out, nil
 }
 
+func (c *keystoreClient) Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/keystore.v1alpha1.Keystore/Join", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KeystoreServer is the server API for Keystore service.
 // All implementations must embed UnimplementedKeystoreServer
 // for forward compatibility
@@ -65,6 +75,7 @@ type KeystoreServer interface {
 	Get(context.Context, *GetRequest) (*GetResponse, error)
 	Set(context.Context, *SetRequest) (*emptypb.Empty, error)
 	Delete(context.Context, *DeleteRequest) (*emptypb.Empty, error)
+	Join(context.Context, *JoinRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedKeystoreServer()
 }
 
@@ -80,6 +91,9 @@ func (UnimplementedKeystoreServer) Set(context.Context, *SetRequest) (*emptypb.E
 }
 func (UnimplementedKeystoreServer) Delete(context.Context, *DeleteRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedKeystoreServer) Join(context.Context, *JoinRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Join not implemented")
 }
 func (UnimplementedKeystoreServer) mustEmbedUnimplementedKeystoreServer() {}
 
@@ -148,6 +162,24 @@ func _Keystore_Delete_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Keystore_Join_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JoinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServer).Join(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/keystore.v1alpha1.Keystore/Join",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServer).Join(ctx, req.(*JoinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Keystore_ServiceDesc is the grpc.ServiceDesc for Keystore service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -166,6 +198,10 @@ var Keystore_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _Keystore_Delete_Handler,
+		},
+		{
+			MethodName: "Join",
+			Handler:    _Keystore_Join_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

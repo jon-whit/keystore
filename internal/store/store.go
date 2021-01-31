@@ -21,7 +21,13 @@ const (
 	deleteKeyOp         = "delete"
 )
 
-var ErrKeyNotFound = fmt.Errorf("key not found")
+var (
+	// ErrNotLeader is returned when a node attempts to execute a leader-only
+	// operation.
+	ErrNotLeader = fmt.Errorf("not leader")
+
+	ErrKeyNotFound = fmt.Errorf("key not found")
+)
 
 // command represents an oplog command persisted to the replicated log.
 type command struct {
@@ -75,10 +81,13 @@ func NewStore(opts ...StoreOption) *Store {
 
 // Open sets up the Raft node and opens the store.
 //
-// If `enableSingle` is set, and there are no existing peers, then
+// If `enableBootstrap` is true, and there are no existing peers, then
 // this node becomes the first node, and therefore leader, of the cluster.
+// If `` is non-empty, then a connection attempt is made to the
+// existing cluster.
+//
 // `localID` should be the server identifier for this node.
-func (s *Store) Open(enableSingle bool, localID string) error {
+func (s *Store) Open(enableBootstrap bool, localID string) error {
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(localID)
 
@@ -119,7 +128,7 @@ func (s *Store) Open(enableSingle bool, localID string) error {
 	}
 	s.raft = ra
 
-	if enableSingle {
+	if enableBootstrap {
 		configuration := raft.Configuration{
 			Servers: []raft.Server{
 				{
@@ -128,9 +137,22 @@ func (s *Store) Open(enableSingle bool, localID string) error {
 				},
 			},
 		}
-		ra.BootstrapCluster(configuration)
+		f := s.raft.BootstrapCluster(configuration)
+		return f.Error()
 	}
 
+	return nil
+}
+
+func (s *Store) Close(wait bool) error {
+
+	f := s.raft.Shutdown()
+
+	if wait {
+		if err := f.Error(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -183,6 +205,70 @@ func (s *Store) Delete(key string) error {
 	return f.Error()
 }
 
+func (s *Store) Join(nodeID, addr string) error {
+
+	configFuture := s.raft.GetConfiguration()
+	if err := configFuture.Error(); err != nil {
+		return err
+	}
+
+	serverID := raft.ServerID(nodeID)
+	serverAddr := raft.ServerAddress(addr)
+
+	for _, srv := range configFuture.Configuration().Servers {
+		// If a node already exists with either the joining node's ID or address,
+		// that node may need to be removed from the config first.
+		if srv.ID == serverID || srv.Address == serverAddr {
+			// However if *both* the ID and the address are the same, then nothing -- not even
+			// a join operation -- is needed.
+			if srv.Address == serverAddr && srv.ID == serverID {
+				return nil
+			}
+
+			future := s.raft.RemoveServer(srv.ID, 0, 0)
+			if err := future.Error(); err != nil {
+				return err
+				//return fmt.Errorf("error removing existing node %s at %s: %s", nodeID, addr, err)
+			}
+		}
+	}
+
+	f := s.raft.AddVoter(serverID, serverAddr, 0, 0)
+	if f.Error() != nil {
+		return f.Error()
+	}
+
+	return nil
+}
+
+func (s *Store) Remove(nodeID string) error {
+	return fmt.Errorf("store.Remove not implemented")
+}
+
+// LeaderAddr returns the address of the current leader. Returns a
+// blank string if there is no leader.
+func (s *Store) LeaderAddr() string {
+	return string(s.raft.Leader())
+}
+
+// LeaderID returns the node ID of the Raft leader. Returns a
+// blank string if there is no leader, or an error.
+func (s *Store) LeaderID() (string, error) {
+	addr := s.LeaderAddr()
+	configFuture := s.raft.GetConfiguration()
+	if err := configFuture.Error(); err != nil {
+		return "", err
+	}
+
+	for _, srv := range configFuture.Configuration().Servers {
+		if srv.Address == raft.ServerAddress(addr) {
+			return string(srv.ID), nil
+		}
+	}
+
+	return "", nil
+}
+
 type fsm Store
 
 func (f *fsm) Apply(log *raft.Log) interface{} {
@@ -203,11 +289,29 @@ func (f *fsm) Apply(log *raft.Log) interface{} {
 }
 
 func (f *fsm) Snapshot() (raft.FSMSnapshot, error) {
-	return nil, fmt.Errorf("fsm.Snapshot not implemented")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Clone the underlying db.
+	o := make(map[string]interface{})
+	for k, v := range f.db {
+		o[k] = v
+	}
+
+	return &fsmSnapshot{db: o}, nil
 }
 
 func (f *fsm) Restore(rc io.ReadCloser) error {
-	return fmt.Errorf("fsm.Restore not implemented")
+
+	o := make(map[string]interface{})
+	if err := json.NewDecoder(rc).Decode(&o); err != nil {
+		return err
+	}
+
+	// Set the state from the snapshot, no lock required according to
+	// Hashicorp docs.
+	f.db = o
+	return nil
 }
 
 func (f *fsm) applySet(key string, value interface{}) interface{} {
@@ -229,7 +333,24 @@ type fsmSnapshot struct {
 }
 
 func (f *fsmSnapshot) Persist(sink raft.SnapshotSink) error {
-	return fmt.Errorf("fsmSnapshot.Persist not implemented")
+	err := func() error {
+		b, err := json.Marshal(f.db)
+		if err != nil {
+			return err
+		}
+
+		// Write the data to the sink
+		if _, err := sink.Write(b); err != nil {
+			return err
+		}
+
+		return sink.Close()
+	}()
+	if err != nil {
+		sink.Cancel()
+	}
+
+	return err
 }
 
 func (f *fsmSnapshot) Release() {}
