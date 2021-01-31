@@ -78,6 +78,7 @@ func main() {
 
 	server := grpc.NewServer()
 	kspb.RegisterKeystoreServer(server, ks)
+	kspb.RegisterRaftStoreServer(server, ks)
 	reflection.Register(server)
 
 	log.Infof("Starting TCP listener on port '%v'", serverAddr)
@@ -121,7 +122,7 @@ func join(joinAddr, raftAddr, nodeID string) error {
 	}
 	defer conn.Close()
 
-	client := kspb.NewKeystoreClient(conn)
+	client := kspb.NewRaftStoreClient(conn)
 
 	_, err = client.Join(context.Background(), &kspb.JoinRequest{
 		NodeId:     nodeID,

@@ -26,6 +26,8 @@ var (
 	// operation.
 	ErrNotLeader = fmt.Errorf("not leader")
 
+	// ErrKeyNotFound is returned when a read attempt is made to a key that
+	// doesn't exist.
 	ErrKeyNotFound = fmt.Errorf("key not found")
 )
 

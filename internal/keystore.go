@@ -34,6 +34,7 @@ type RaftStore interface {
 
 // Keystore implements the key/value storage service for the v1alpha1 keystore API.
 type Keystore struct {
+	kspb.UnimplementedRaftStoreServer
 	kspb.UnimplementedKeystoreServer
 
 	store RaftStore
