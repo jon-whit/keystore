@@ -2,6 +2,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -10,26 +12,62 @@ import (
 	kspb "github.com/jon-whit/keystore/api/protos/keystore/v1alpha1"
 	keystore "github.com/jon-whit/keystore/internal"
 	"github.com/jon-whit/keystore/internal/store"
-	"github.com/prometheus/common/log"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
 const (
-	defaultServicePort = ":50051"
+	defaultServiceAddr = ":50051"
+	defaultRaftAddr    = ":12000"
 )
 
-func main() {
+var inmem bool
+var serverAddr string
+var raftAddr string
+var joinAddr string
+var nodeID string
 
-	log.Infof("Starting TCP listener on port '%v'", defaultServicePort)
-	lis, err := net.Listen("tcp", defaultServicePort)
-	if err != nil {
-		log.Fatalf("Failed to listen on TCP port '%v': %v", defaultServicePort, err)
+func init() {
+	flag.BoolVar(&inmem, "inmem", false, "Use in-memory storage for Raft")
+	flag.StringVar(&serverAddr, "saddr", defaultServiceAddr, "The Keystore service bind address")
+	flag.StringVar(&raftAddr, "raddr", defaultRaftAddr, "The Raft Store bind address")
+	flag.StringVar(&joinAddr, "join", "", "Set join address, if any")
+	flag.StringVar(&nodeID, "id", "", "Node ID")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "%s [options] <raft-storage-dir> \n", os.Args[0])
+		flag.PrintDefaults()
+	}
+}
+
+func main() {
+	flag.Parse()
+
+	if flag.NArg() == 0 {
+		log.Fatalf("The Raft storage directory is required")
 	}
 
-	store, err := store.NewStore()
-	if err != nil {
-		log.Fatalf("Failed to initialize the key/value Store: %v", err)
+	raftStorageDir := flag.Arg(0)
+	if raftStorageDir == "" {
+		log.Fatalf("The Raft storage directory is required")
+	}
+
+	if err := os.MkdirAll(raftStorageDir, 0700); err != nil {
+		log.Fatalf("Failed to create the Raft storage directory: %v", err)
+	}
+
+	storeOpts := []store.StoreOption{
+		store.RaftBindAddr(raftAddr),
+		store.RaftStorageDir(raftStorageDir),
+	}
+
+	if inmem {
+		storeOpts = append(storeOpts, store.InmemStore())
+	}
+
+	store := store.NewStore(storeOpts...)
+	if err := store.Open(joinAddr == "", nodeID); err != nil {
+		log.Fatalf("Failed to open the key/value Raft Store: %v", err)
 	}
 
 	ks, err := keystore.NewKeystore(store)
@@ -40,6 +78,12 @@ func main() {
 	server := grpc.NewServer()
 	kspb.RegisterKeystoreServer(server, ks)
 	reflection.Register(server)
+
+	log.Infof("Starting TCP listener on port '%v'", serverAddr)
+	lis, err := net.Listen("tcp", serverAddr)
+	if err != nil {
+		log.Fatalf("Failed to listen on TCP port '%v': %v", serverAddr, err)
+	}
 
 	serverErr := make(chan error)
 	go func() {

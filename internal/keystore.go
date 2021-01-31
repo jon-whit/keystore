@@ -4,6 +4,9 @@ import (
 	"context"
 
 	kspb "github.com/jon-whit/keystore/api/protos/keystore/v1alpha1"
+	"github.com/jon-whit/keystore/internal/store"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -32,7 +35,10 @@ func (ks *Keystore) Get(ctx context.Context, in *kspb.GetRequest) (*kspb.GetResp
 
 	val, err := ks.store.Get(in.GetKey())
 	if err != nil {
-		// todo: handle error
+		if err == store.ErrKeyNotFound {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+
 		return nil, err
 	}
 
